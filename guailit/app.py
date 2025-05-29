@@ -233,18 +233,37 @@ async def render_camera_control():
             # Rerun to update the UI and stop the streaming loop
             st.rerun()
 
+        # Create a placeholder for the camera stream image
+        image_placeholder = st.empty()
+
         # Separate async function to stream a single frame
         async def stream_single_frame():
-            if st.session_state.streaming and 'camera_instance_stream' in st.session_state and st.session_state.camera_instance_stream:
-                st.write("Streaming... (Click 'Stop Streaming' to end)")
-                image_placeholder = st.empty()
+            # The streaming loop will now be inside this function
+            if 'camera_instance_stream' not in st.session_state or not st.session_state.camera_instance_stream:
+                 st.error("Streaming is active but camera instance is not available.")
+                 st.session_state.streaming = False
+                 return # Exit if no camera instance
 
-                camera_instance_stream = st.session_state.camera_instance_stream
+            st.write("Streaming... (Click 'Stop Streaming' to end)")
 
+            camera_instance_stream = st.session_state.camera_instance_stream
+
+            # Create a placeholder for the camera stream image
+            # This placeholder should ideally be created once outside this loop
+            # We will update the existing placeholder created in render_camera_control
+            image_placeholder = st.empty() # This line is actually redundant here if created outside
+
+            while st.session_state.streaming:
                 try:
                     # Use getFutureFrames(1) for streaming
                     # Await the async function directly
-                    frame_object = await asyncio.to_thread(camera_instance_stream.getFutureFrames, 1)
+                    result = await asyncio.to_thread(camera_instance_stream.getFutureFrames, 1)
+
+                    frame_object = None
+                    if isinstance(result, list) and result:
+                        frame_object = result[0]
+                    elif result is not None:
+                        frame_object = result
 
                     if frame_object:
                         frame = frame_object.toNumpyArray()
@@ -255,35 +274,51 @@ async def render_camera_control():
                         if is_success:
                             jpeg_bytes = buffer.tobytes()
                             image = Image.open(io.BytesIO(jpeg_bytes))
+                            # Update the image in the placeholder
                             image_placeholder.image(image)
                         else:
                             st.error("Could not encode frame to JPEG in stream.")
 
                     # Add a small delay
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.01) # Reduce delay for potentially smoother stream
 
                 except Exception as e:
                     st.error(f"Error during streaming: {e}")
-                    st.session_state.streaming = False
+                    st.session_state.streaming = False # Stop streaming on error
+                    # Close the camera connection when stopping stream
                     if 'camera_instance_stream' in st.session_state and st.session_state.camera_instance_stream:
                          try:
-                             st.session_state.camera_instance_stream.close()
+                             camera_instance_stream.close()
                          except AttributeError:
                              pass
                          finally:
                              del st.session_state.camera_instance_stream
-                finally:
-                    # If streaming is still active, rerun the script to get the next frame
-                    if st.session_state.streaming:
-                         st.rerun()
 
-            elif st.session_state.streaming and ('camera_instance_stream' not in st.session_state or not st.session_state.camera_instance_stream):
-                 st.error("Streaming is active but camera instance is not available.")
-                 st.session_state.streaming = False
+            # This part is reached when st.session_state.streaming becomes False
+            st.write("Streaming stopped.")
+            # Rerun to update the UI after stopping the stream (optional but can clean up state)
+            # st.rerun() # We might need one final rerun here to clean up state if necessary
 
+        # Removed the direct await call here
         # Call the async single frame streaming function if streaming is active
         if st.session_state.streaming:
-            # Await the async streaming function directly
+            # We need to run the async streaming function in a way that doesn't block
+            # the main Streamlit event loop. This is tricky.
+            # Option 1: Use a separate thread/process to run the loop and communicate back (complex)
+            # Option 2: Use Streamlit's native update mechanism if possible (st.image returns an updatable object)
+            # Option 3: A simple non-blocking loop might require custom components or different framework.
+
+            # For now, let's call the async function, but understand it might not stream continuously this way
+            # without a mechanism to keep it running without blocking or rerunning excessively.
+            # Let's revert to the previous state for now, but keep the placeholder concept.
+
+            # Let's go back to the state where the single frame capture works
+            # and the streaming is attempted via rerun, while we figure out the non-blocking loop.
+            # This means restoring the st.rerun() in the stream_single_frame logic
+            # and the await call here.
+
+            # Reverting to the previous state where await stream_single_frame() is called here
+            # and st.rerun() is inside stream_single_frame to cause loop continuation.
             await stream_single_frame()
 
     else:
